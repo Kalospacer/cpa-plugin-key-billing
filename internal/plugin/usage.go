@@ -32,6 +32,10 @@ func usageHasTokens(detail UsageDetail) bool {
 // it deliberately keeps the zero-value quality used by request events.
 func usageBreakdown(record UsageRecord) billing.TokenBreakdown {
 	detail := record.Detail
+	// 宿主自己算好的口径优先：填扁平字段的解析器由调用方协议决定，名字推不出来。
+	if adopted, ok := hostTokenBreakdown(detail.Breakdown); ok {
+		return adopted
+	}
 	if !usageHasTokens(detail) {
 		return billing.TokenBreakdown{}
 	}
@@ -269,4 +273,40 @@ func unclassifiedLowerBound(input, output, reasoning, cacheRead, cacheWrite, cac
 		output = reasoning
 	}
 	return checkedTokenSum(input, output)
+}
+
+// hostTokenAccountingSchemaVersion is the only host breakdown contract this
+// plugin understands.
+const hostTokenAccountingSchemaVersion = 2
+
+// hostTokenBreakdown adopts the accounting CLIProxyAPI already computed for the
+// request. The host fills the flat counters with whichever parser matches the
+// caller's protocol, and only forwards a breakdown that validated, so adopting
+// it keeps plugin executors (whose provider and executor names carry no protocol
+// information) priced exactly like built-in ones. A nil or invalid breakdown
+// falls back to the inference below, which is what older hosts get.
+func hostTokenBreakdown(breakdown *UsageTokenBreakdown) (billing.TokenBreakdown, bool) {
+	if breakdown == nil || breakdown.SchemaVersion != hostTokenAccountingSchemaVersion {
+		return billing.TokenBreakdown{}, false
+	}
+	adopted := billing.TokenBreakdown{
+		Quality:     billing.TokenAccountingQuality(strings.ToLower(strings.TrimSpace(breakdown.Quality))),
+		TotalTokens: breakdown.TotalTokens,
+		Input: billing.TokenInputBreakdown{
+			TotalTokens:      breakdown.Input.TotalTokens,
+			UncachedTokens:   breakdown.Input.UncachedTokens,
+			CacheReadTokens:  breakdown.Input.CacheReadTokens,
+			CacheWriteTokens: breakdown.Input.CacheWriteTokens,
+		},
+		Output: billing.TokenOutputBreakdown{
+			TotalTokens:        breakdown.Output.TotalTokens,
+			NonReasoningTokens: breakdown.Output.NonReasoningTokens,
+			ReasoningTokens:    breakdown.Output.ReasoningTokens,
+		},
+		UnclassifiedTokens: breakdown.UnclassifiedTokens,
+	}
+	if !adopted.Valid() {
+		return billing.TokenBreakdown{}, false
+	}
+	return adopted, true
 }

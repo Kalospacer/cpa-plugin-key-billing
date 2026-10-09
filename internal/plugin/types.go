@@ -18,7 +18,7 @@ const (
 const (
 	PluginID   = "cpa-key-billing"
 	PluginName = "cpa-key-billing"
-	Version    = "1.3.18"
+	Version    = "1.3.19"
 
 	MenuLabel       = "API Key Billing"
 	MenuDescription = "Manage downstream API key routing, billing, concurrency limits, subscription quotas, and usage"
@@ -179,6 +179,38 @@ type UsageDetail struct {
 	CacheReadTokens     int64 `json:"CacheReadTokens"`
 	CacheCreationTokens int64 `json:"CacheCreationTokens"`
 	TotalTokens         int64 `json:"TotalTokens"`
+	// Breakdown is the host's own v2 accounting for this request. Which parser
+	// filled the flat counters above depends on the protocol the caller used
+	// (the same model over /v1/responses, /v1/chat/completions or the native
+	// Claude API produces different field meanings), so the quality and the
+	// buckets cannot be recovered from Provider/ExecutorType. Nil on hosts that
+	// do not publish it, or when the host's accounting did not validate.
+	Breakdown *UsageTokenBreakdown `json:"Breakdown"`
+}
+
+// UsageTokenBreakdown mirrors CLIProxyAPI's canonical v2 token accounting.
+type UsageTokenBreakdown struct {
+	SchemaVersion      int                       `json:"SchemaVersion"`
+	Quality            string                    `json:"Quality"`
+	TotalTokens        int64                     `json:"TotalTokens"`
+	Input              UsageTokenInputBreakdown  `json:"Input"`
+	Output             UsageTokenOutputBreakdown `json:"Output"`
+	UnclassifiedTokens int64                     `json:"UnclassifiedTokens"`
+}
+
+// UsageTokenInputBreakdown contains mutually exclusive input token buckets.
+type UsageTokenInputBreakdown struct {
+	TotalTokens      int64 `json:"TotalTokens"`
+	UncachedTokens   int64 `json:"UncachedTokens"`
+	CacheReadTokens  int64 `json:"CacheReadTokens"`
+	CacheWriteTokens int64 `json:"CacheWriteTokens"`
+}
+
+// UsageTokenOutputBreakdown contains mutually exclusive output token buckets.
+type UsageTokenOutputBreakdown struct {
+	TotalTokens        int64 `json:"TotalTokens"`
+	NonReasoningTokens int64 `json:"NonReasoningTokens"`
+	ReasoningTokens    int64 `json:"ReasoningTokens"`
 }
 
 type ManagementRegistrationResponse struct {

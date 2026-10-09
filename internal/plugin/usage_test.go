@@ -207,3 +207,56 @@ func TestUsageBreakdownMatchesCurrentHostForAuxiliaryOnlyRecords(t *testing.T) {
 		})
 	}
 }
+
+// 插件执行器的 provider/executor 名字里没有协议信息（mirasim + executorAdapter），
+// 因此只能采用宿主过界的口径；未经校验的则继续走原有推断。
+func TestUsageBreakdownPrefersHostTokenBreakdown(t *testing.T) {
+	complete := &UsageTokenBreakdown{
+		SchemaVersion: 2,
+		Quality:       "complete",
+		TotalTokens:   248,
+		Input:         UsageTokenInputBreakdown{TotalTokens: 90, UncachedTokens: 90},
+		Output:        UsageTokenOutputBreakdown{TotalTokens: 158, NonReasoningTokens: 21, ReasoningTokens: 137},
+	}
+	pluginRecord := UsageRecord{Provider: "mirasim", ExecutorType: "executorAdapter", Model: "kimi-k3", Detail: UsageDetail{
+		InputTokens: 90, OutputTokens: 158, ReasoningTokens: 137, TotalTokens: 248,
+		Breakdown: complete,
+	}}
+	got := usageBreakdown(pluginRecord)
+	want := billing.TokenBreakdown{
+		Quality: billing.TokenAccountingComplete, TotalTokens: 248,
+		Input:  billing.TokenInputBreakdown{TotalTokens: 90, UncachedTokens: 90},
+		Output: billing.TokenOutputBreakdown{TotalTokens: 158, NonReasoningTokens: 21, ReasoningTokens: 137},
+	}
+	if got != want {
+		t.Fatalf("host breakdown was not adopted: got %+v want %+v", got, want)
+	}
+
+	unclassified := *complete
+	unclassified.Quality = "unclassified"
+	unclassified.TotalTokens = 248
+	unclassified.Input = UsageTokenInputBreakdown{}
+	unclassified.Output = UsageTokenOutputBreakdown{}
+	unclassified.UnclassifiedTokens = 248
+	if got := usageBreakdown(UsageRecord{Detail: UsageDetail{Breakdown: &unclassified}}); got.Quality != billing.TokenAccountingUnclassified || got.UnclassifiedTokens != 248 {
+		t.Fatalf("host unclassified breakdown was not adopted: %+v", got)
+	}
+}
+
+func TestUsageBreakdownIgnoresUnvalidatedHostTokenBreakdown(t *testing.T) {
+	// 总数对不上的 breakdown 不能采用：退回原有推断（插件执行器仍是 unclassified）。
+	broken := &UsageTokenBreakdown{SchemaVersion: 2, Quality: "complete", TotalTokens: 999}
+	got := usageBreakdown(UsageRecord{Provider: "mirasim", ExecutorType: "executorAdapter", Detail: UsageDetail{
+		InputTokens: 90, OutputTokens: 158, TotalTokens: 248, Breakdown: broken,
+	}})
+	if got.Quality != billing.TokenAccountingUnclassified || got.UnclassifiedTokens != 248 {
+		t.Fatalf("invalid host breakdown changed the fallback: %+v", got)
+	}
+	// 旧宿主不带 Breakdown 时行为完全不变。
+	legacy := usageBreakdown(UsageRecord{Provider: "claude", ExecutorType: "ClaudeExecutor", Detail: UsageDetail{
+		InputTokens: 90, OutputTokens: 158, CacheReadTokens: 10, TotalTokens: 258,
+	}})
+	if legacy.Quality != billing.TokenAccountingComplete || legacy.Input.CacheReadTokens != 10 {
+		t.Fatalf("legacy inference path changed: %+v", legacy)
+	}
+}
